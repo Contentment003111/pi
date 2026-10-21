@@ -2622,41 +2622,54 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		// Process Tencent Token Plan models. The plan serves Hunyuan (Hy) models
-		// through an OpenAI-compatible endpoint and documents an Anthropic-compatible
-		// one at /plan/anthropic. Chat Completions keeps the catalog aligned with the
-		// other Token Plan providers. Hy reports toggle plus effort ["none", "high"],
-		// so getEffortThinkingLevelMap yields off: "none" and high: "high".
-		const tencentTokenPlanCompat: OpenAICompletionsCompat = {
+		// Process Tencent Hunyuan (Hy) models. TokenHub is the pay-as-you-go
+		// endpoint; Token Plan is the prepaid plan endpoint. Both speak Chat
+		// Completions and document an Anthropic-compatible path alongside it.
+		// Hy reports a toggle plus effort values, so getEffortThinkingLevelMap
+		// yields off: "none" and high: "high" for hy3 and hy4-preview, and
+		// low/medium/high for hy3-preview.
+		const tencentHyCompat: OpenAICompletionsCompat = {
 			supportsDeveloperRole: false,
 			supportsStore: false,
 			supportsReasoningEffort: true,
 			maxTokensField: "max_tokens",
 		};
-
-		for (const [modelId, model] of Object.entries(data["tencent-token-plan"]?.models ?? {})) {
-			const m = model as ModelsDevModel;
-			if (m.tool_call !== true) continue;
-
-			const thinkingLevelMap = getEffortThinkingLevelMap(m.reasoning_options ?? []);
-
-			models.push({
-				id: modelId,
-				name: m.name || modelId,
-				api: "openai-completions",
+		const tencentHyVariants = [
+			{
+				source: "tencent-tokenhub",
+				provider: "tencent-tokenhub",
+				baseUrl: "https://tokenhub.tencentmaas.com/v1",
+			},
+			{
+				source: "tencent-token-plan",
 				provider: "tencent-token-plan",
 				baseUrl: "https://api.lkeap.cloud.tencent.com/plan/v3",
-				compat: thinkingLevelMap
-					? tencentTokenPlanCompat
-					: { ...tencentTokenPlanCompat, supportsReasoningEffort: false },
-				...(thinkingLevelMap ? { thinkingLevelMap } : {}),
-				reasoning: m.reasoning === true,
-				input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-				cost: getModelsDevCost(m.cost),
-				contextWindow: m.limit?.context || 4096,
-				maxTokens: m.limit?.output || 4096,
-			});
-			recordModelsDevReasoningOptions("tencent-token-plan", modelId, m);
+			},
+		] as const;
+
+		for (const { source, provider, baseUrl } of tencentHyVariants) {
+			for (const [modelId, model] of Object.entries(data[source]?.models ?? {})) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				const thinkingLevelMap = getEffortThinkingLevelMap(m.reasoning_options ?? []);
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider,
+					baseUrl,
+					compat: thinkingLevelMap ? tencentHyCompat : { ...tencentHyCompat, supportsReasoningEffort: false },
+					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: getModelsDevCost(m.cost),
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+				recordModelsDevReasoningOptions(provider, modelId, m);
+			}
 		}
 
 		console.log(`Loaded ${models.length} tool-capable models from models.dev`);
